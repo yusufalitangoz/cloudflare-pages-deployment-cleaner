@@ -14,7 +14,8 @@ if (
   throw new Error("Missing env vars.");
 }
 
-let deletedCount = 0;
+let deletedDeploymentCount = 0;
+let totalDeployments = 0;
 
 async function cloudflareFetch(
   path: string,
@@ -27,36 +28,51 @@ async function cloudflareFetch(
     },
     ...options,
   });
+
   const body: any = await response.json();
+
   if (!body.success) {
     throw new Error(JSON.stringify(body.errors ?? body, null, 2));
   }
+
   return body;
 }
 
 async function fetchAllDeploymentIds(): Promise<string[]> {
-  const deployments: any[] = [];
-  const perPage = 25;
-  let page = 1;
+  const { result, result_info } = await cloudflareFetch(
+    `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments?page=1&per_page=25`,
+  );
 
-  while (true) {
-    const body = await cloudflareFetch(
-      `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments?page=${page}&per_page=${perPage}`,
-    );
-    const result = body.result ?? [];
-    deployments.push(...result);
-    if (result.length < perPage) {
-      break;
-    }
-    page++;
-  }
+  const ids: string[] = result.map(({ id }: { id: string }) => id);
+  totalDeployments = result_info.total_count;
 
-  return deployments.map(({ id }) => id);
+  console.log(
+    `Page: 1/${result_info.total_pages} | Deployment: ${ids.length}/${totalDeployments}`,
+  );
+
+  await pool(
+    Array.from({ length: result_info.total_pages - 1 }, (_, i) => i + 2),
+    async (page) => {
+      const { result, result_info } = await cloudflareFetch(
+        `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments?page=${page}&per_page=25`,
+      );
+      ids.push(...result.map(({ id }: { id: string }) => id));
+      console.log(
+        `Page: ${page}/${result_info.total_pages} | Deployment: ${ids.length}/${totalDeployments}`,
+      );
+    },
+    Number(CONCURRENCY),
+  );
+
+  return ids;
 }
 
 async function deleteDeployment(id: string): Promise<void> {
   if (DRY_RUN === "true") {
-    console.log(`[DRY-RUN] Would delete deployment ${id}`);
+    deletedDeploymentCount++;
+    console.log(
+      `[DRY-RUN] | ${deletedDeploymentCount}/${totalDeployments} | would delete deployment.`,
+    );
     return;
   }
   try {
@@ -64,8 +80,10 @@ async function deleteDeployment(id: string): Promise<void> {
       `/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${CLOUDFLARE_PAGES_PROJECT}/deployments/${id}`,
       { method: "DELETE" },
     );
-    deletedCount++;
-    console.log(`Deleted deployment ${id}`);
+    deletedDeploymentCount++;
+    console.log(
+      `${deletedDeploymentCount}/${totalDeployments} | deployment deleted successfully.`,
+    );
   } catch (error) {
     console.error(error);
   }
@@ -80,23 +98,21 @@ async function pool<T>(
   const workers = Array.from({ length: concurrency }, async () => {
     while (queue.length) {
       const item = queue.shift();
-      if (!item) {
-        return;
-      }
+      if (!item) return;
       await worker(item);
     }
   });
   await Promise.all(workers);
 }
 
-console.log("Fetching all deployments...");
+console.log("Fetching all deployment IDs...");
 
 const deploymentIds = await fetchAllDeploymentIds();
 
-console.log(`Found ${deploymentIds.length} deployments.`);
+console.log(`Deletion is starting...`);
 
-if (deploymentIds.length > 0) {
-  await pool(deploymentIds, deleteDeployment, Number(CONCURRENCY));
+await pool(deploymentIds, deleteDeployment, Number(CONCURRENCY));
 
-  console.log(`${deletedCount} deployments deleted successfully.`);
-}
+console.log(
+  `${deletedDeploymentCount}/${totalDeployments} deployments deleted successfully.`,
+);
