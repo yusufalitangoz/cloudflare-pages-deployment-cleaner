@@ -1,5 +1,6 @@
 # ⚠️ Cloudflare Pages Deployment Cleaner
 
+> [!WARNING]
 > **WARNING: THIS PROJECT DELETES _ALL_ DEPLOYMENTS OF A CLOUDFLARE PAGES PROJECT.**
 > There is **NO UNDO**. Use at your own risk.
 
@@ -11,6 +12,7 @@ This is a **one time, local cleanup script** written in **Bun + TypeScript**.
 
 Its **only purpose** is to:
 
+> [!CAUTION]
 > 🔥 **Delete _ALL_ deployments (production + preview) of a given Cloudflare Pages project**
 
 If you start this project:
